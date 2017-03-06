@@ -49,7 +49,7 @@ warnx(const char *fmt, ...)
   va_end(args);
 }
 
-
+// 推算格式化字符串的大小，并分配对应的空间
 char*
 fmtalloc(char *fmt, ...)
 {

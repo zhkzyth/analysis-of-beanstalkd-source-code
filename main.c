@@ -97,8 +97,11 @@ main(int argc, char **argv)
 
     list.prev = list.next = &list;
 
+    // 把bin log文件夹的日志重写回job list里
+    // 为后续的数据还原做准备
     walinit(&srv.wal, &list);
 
+    // 重放日志文件，把数据塞到内存里面
     r = prot_replay(&srv, &list);
     if (!r) {
       twarnx("failed to replay log");
@@ -107,6 +110,8 @@ main(int argc, char **argv)
 
   }
 
+  // ok，基本准备完毕，可以开始我们的server了
   srvserve(&srv);
+
   return 0;
 }

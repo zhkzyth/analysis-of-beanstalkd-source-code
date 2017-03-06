@@ -442,7 +442,7 @@ waldirlock(Wal *w)
   return 1;
 }
 
-// 从bin log里面读取需要的数据，还原到内存里面
+// 从bin log里面读取需要的数据，扔到job list里面
 void
 walread(Wal *w, job list, int min)
 {
@@ -496,6 +496,7 @@ walinit(Wal *w, job list)
   min = walscandir(w); // 扫描当前的binlog文件夹，找出最新的log数量
   walread(w, list, min); //
 
+  // 然后生成最新可以用来写的bin log文件对象
   // first writable file
   if (!makenextfile(w)) {
     twarnx("makenextfile");

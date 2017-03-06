@@ -1,6 +1,5 @@
 /*
  * 文件操作函数
- *
 */
 
 #include <stdint.h>
@@ -106,6 +105,7 @@ filermjob(File *f, job j)
 }
 
 
+// 按照版本来读取内容，全部扔到job list里面
 // Fileread reads jobs from f->path into list.
 // It returns 0 on success, or 1 if any errors occurred.
 int
@@ -116,6 +116,7 @@ fileread(File *f, job list)
   if (!readfull(f, &v, sizeof(v), &err, "version")) {
     return err;
   }
+
   switch (v) {
   case Walver:
     fileincref(f);
@@ -134,6 +135,7 @@ fileread(File *f, job list)
 }
 
 
+// TODO 待分析
 // Readrec reads a record from f->fd into linked list l.
 // If an error occurs, it sets *err to 1.
 // Readrec returns the number of records read, either 1 or 0.
@@ -552,11 +554,12 @@ fileinit(File *f, Wal *w, int n)
 {
   f->w = w; // 保存目录信息
   f->seq = n; // 保存自己的序号信息
-  f->path = fmtalloc("%s/binlog.%d", w->dir, n); // 分配空间
+  f->path = fmtalloc("%s/binlog.%d", w->dir, n); // 分配目录的存储名的存储空间
   return !!f->path;
 }
 
 
+// 更新单向链表，并同时更新两个头尾指针值
 // Adds f to the linked list in w,
 // updating w->tail and w->head as necessary.
 Wal*
