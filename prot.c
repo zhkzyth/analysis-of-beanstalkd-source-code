@@ -1854,6 +1854,7 @@ prothandle(Conn *c, int ev)
     h_conn(c->sock.fd, ev, c);
 }
 
+// 貌似是一个更新Srv的connection列表的机制，待完善
 int64
 prottick(Server *s)
 {
@@ -1866,6 +1867,7 @@ prottick(Server *s)
     int64 d;
 
     now = nanoseconds();
+
     while ((j = delay_q_peek())) {
         d = j->r.deadline_at - now;
         if (d > 0) {
@@ -1890,7 +1892,9 @@ prottick(Server *s)
     }
 
     while (s->conns.len) {
+
         Conn *c = s->conns.data[0];
+
         d = c->tickat - now;
         if (d > 0) {
             period = min(period, d);
@@ -1906,6 +1910,7 @@ prottick(Server *s)
     return period;
 }
 
+// 接受请求？
 void
 h_accept(const int fd, const short which, Server *s)
 {
@@ -1936,6 +1941,7 @@ h_accept(const int fd, const short which, Server *s)
         return;
     }
 
+    // 设置socket的non blocking属性
     r = fcntl(cfd, F_SETFL, flags | O_NONBLOCK);
     if (r < 0) {
         twarn("setting O_NONBLOCK");
@@ -1975,9 +1981,11 @@ h_accept(const int fd, const short which, Server *s)
     update_conns();
 }
 
+// 初始化协议
 void
 prot_init()
 {
+    // 分配内存
     started_at = nanoseconds();
     memset(op_ct, 0, sizeof(op_ct));
 

@@ -33,6 +33,7 @@ make_conn(int fd, char start_state, tube use, tube watch)
     job j;
     Conn *c;
 
+    // new一个Conn对象出来
     c = new(Conn);
     if (!c) return twarn("OOM"), NULL;
 

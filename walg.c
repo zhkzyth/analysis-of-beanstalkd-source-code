@@ -22,51 +22,53 @@ static int reserve(Wal *w, int n);
 static int
 walscandir(Wal *w)
 {
-    static char base[] = "binlog.";
-    static const int len = sizeof(base) - 1;
-    DIR *d;
-    struct dirent *e;
-    int min = 1<<30;
-    int max = 0;
-    int n;
-    char *p;
+  static char base[] = "binlog.";
+  static const int len = sizeof(base) - 1;
+  DIR *d;
+  struct dirent *e;
+  int min = 1<<30;
+  int max = 0;
+  int n;
+  char *p;
 
-    d = opendir(w->dir);
-    if (!d) return min;
+  d = opendir(w->dir);
+  if (!d) return min;
 
-    while ((e = readdir(d))) {
-        if (strncmp(e->d_name, base, len) == 0) {
-            n = strtol(e->d_name+len, &p, 10);
-            if (p && *p == '\0') {
-                if (n > max) max = n;
-                if (n < min) min = n;
-            }
-        }
+  while ((e = readdir(d))) {
+
+    if (strncmp(e->d_name, base, len) == 0) {
+      n = strtol(e->d_name+len, &p, 10);
+      if (p && *p == '\0') {
+        if (n > max) max = n; // bin log记录到的位置，记录当前共有多少个文件
+        if (n < min) min = n; // 可能只是一个哨兵信号量？
+      }
     }
 
-    closedir(d);
-    w->next = max + 1;
-    return min;
+  }
+
+  closedir(d);
+  w->next = max + 1;
+  return min;
 }
 
 
 void
 walgc(Wal *w)
 {
-    File *f;
+  File *f;
 
-    while (w->head && !w->head->refs) {
-        f = w->head;
-        w->head = f->next;
-        if (w->tail == f) {
-            w->tail = f->next; // also, f->next == NULL
-        }
-
-        w->nfile--;
-        unlink(f->path);
-        free(f->path);
-        free(f);
+  while (w->head && !w->head->refs) {
+    f = w->head;
+    w->head = f->next;
+    if (w->tail == f) {
+      w->tail = f->next; // also, f->next == NULL
     }
+
+    w->nfile--;
+    unlink(f->path);
+    free(f->path);
+    free(f);
+  }
 }
 
 
@@ -74,29 +76,29 @@ walgc(Wal *w)
 static int
 usenext(Wal *w)
 {
-    File *f;
+  File *f;
 
-    f = w->cur;
-    if (!f->next) {
-        twarnx("there is no next wal file");
-        return 0;
-    }
+  f = w->cur;
+  if (!f->next) {
+    twarnx("there is no next wal file");
+    return 0;
+  }
 
-    w->cur = f->next;
-    filewclose(f);
-    return 1;
+  w->cur = f->next;
+  filewclose(f);
+  return 1;
 }
 
 
 static int
 ratio(Wal *w)
 {
-    int64 n, d;
+  int64 n, d;
 
-    d = w->alive + w->resv;
-    n = (int64)w->nfile * (int64)w->filesize - d;
-    if (!d) return 0;
-    return n / d;
+  d = w->alive + w->resv;
+  n = (int64)w->nfile * (int64)w->filesize - d;
+  if (!d) return 0;
+  return n / d;
 }
 
 
@@ -104,70 +106,70 @@ ratio(Wal *w)
 static int
 walresvmigrate(Wal *w, job j)
 {
-    int z = 0;
+  int z = 0;
 
-    // reserve only space for the migrated full job record
-    // space for the delete is already reserved
-    z += sizeof(int);
-    z += strlen(j->tube->name);
-    z += sizeof(Jobrec);
-    z += j->r.body_size;
+  // reserve only space for the migrated full job record
+  // space for the delete is already reserved
+  z += sizeof(int);
+  z += strlen(j->tube->name);
+  z += sizeof(Jobrec);
+  z += j->r.body_size;
 
-    return reserve(w, z);
+  return reserve(w, z);
 }
 
 
 static void
 moveone(Wal *w)
 {
-    job j;
+  job j;
 
-    if (w->head == w->cur || w->head->next == w->cur) {
-        // no point in moving a job
-        return;
-    }
+  if (w->head == w->cur || w->head->next == w->cur) {
+    // no point in moving a job
+    return;
+  }
 
-    j = w->head->jlist.fnext;
-    if (!j || j == &w->head->jlist) {
-        // head holds no jlist; can't happen
-        twarnx("head holds no jlist");
-        return;
-    }
+  j = w->head->jlist.fnext;
+  if (!j || j == &w->head->jlist) {
+    // head holds no jlist; can't happen
+    twarnx("head holds no jlist");
+    return;
+  }
 
-    if (!walresvmigrate(w, j)) {
-        // it will not fit, so we'll try again later
-        return;
-    }
+  if (!walresvmigrate(w, j)) {
+    // it will not fit, so we'll try again later
+    return;
+  }
 
-    filermjob(w->head, j);
-    w->nmig++;
-    walwrite(w, j);
+  filermjob(w->head, j);
+  w->nmig++;
+  walwrite(w, j);
 }
 
 
 static void
 walcompact(Wal *w)
 {
-    int r;
+  int r;
 
-    for (r=ratio(w); r>=2; r--) {
-        moveone(w);
-    }
+  for (r=ratio(w); r>=2; r--) {
+    moveone(w);
+  }
 }
 
 
 static void
 walsync(Wal *w)
 {
-    int64 now;
+  int64 now;
 
-    now = nanoseconds();
-    if (w->wantsync && now >= w->lastsync+w->syncrate) {
-        w->lastsync = now;
-        if (fsync(w->cur->fd) == -1) {
-            twarn("fsync");
-        }
+  now = nanoseconds();
+  if (w->wantsync && now >= w->lastsync+w->syncrate) {
+    w->lastsync = now;
+    if (fsync(w->cur->fd) == -1) {
+      twarn("fsync");
     }
+  }
 }
 
 
@@ -178,83 +180,83 @@ walsync(Wal *w)
 int
 walwrite(Wal *w, job j)
 {
-    int r = 0;
+  int r = 0;
 
-    if (!w->use) return 1;
-    if (w->cur->resv > 0 || usenext(w)) {
-        if (j->file) {
-            r = filewrjobshort(w->cur, j);
-        } else {
-            r = filewrjobfull(w->cur, j);
-        }
+  if (!w->use) return 1;
+  if (w->cur->resv > 0 || usenext(w)) {
+    if (j->file) {
+      r = filewrjobshort(w->cur, j);
+    } else {
+      r = filewrjobfull(w->cur, j);
     }
-    if (!r) {
-        filewclose(w->cur);
-        w->use = 0;
-    }
-    w->nrec++;
-    return r;
+  }
+  if (!r) {
+    filewclose(w->cur);
+    w->use = 0;
+  }
+  w->nrec++;
+  return r;
 }
 
 
 void
 walmaint(Wal *w)
 {
-    if (w->use) {
-        if (!w->nocomp) {
-            walcompact(w);
-        }
-        walsync(w);
+  if (w->use) {
+    if (!w->nocomp) {
+      walcompact(w);
     }
+    walsync(w);
+  }
 }
 
 
 static int
 makenextfile(Wal *w)
 {
-    File *f;
+  File *f;
 
-    f = new(File);
-    if (!f) {
-        twarnx("OOM");
-        return 0;
-    }
+  f = new(File);
+  if (!f) {
+    twarnx("OOM");
+    return 0;
+  }
 
-    if (!fileinit(f, w, w->next)) {
-        free(f);
-        twarnx("OOM");
-        return 0;
-    }
+  if (!fileinit(f, w, w->next)) {
+    free(f);
+    twarnx("OOM");
+    return 0;
+  }
 
-    filewopen(f);
-    if (!f->iswopen) {
-        free(f->path);
-        free(f);
-        return 0;
-    }
+  filewopen(f);
+  if (!f->iswopen) {
+    free(f->path);
+    free(f);
+    return 0;
+  }
 
-    w->next++;
-    fileadd(f, w);
-    return 1;
+  w->next++;
+  fileadd(f, w);
+  return 1;
 }
 
 
 static void
 moveresv(File *to, File *from, int n)
 {
-    from->resv -= n;
-    from->free += n;
-    to->resv += n;
-    to->free -= n;
+  from->resv -= n;
+  from->free += n;
+  to->resv += n;
+  to->free -= n;
 }
 
 
 static int
 needfree(Wal *w, int n)
 {
-    if (w->tail->free >= n) return n;
-    if (makenextfile(w)) return n;
-    return 0;
+  if (w->tail->free >= n) return n;
+  if (makenextfile(w)) return n;
+  return 0;
 }
 
 
@@ -270,27 +272,27 @@ needfree(Wal *w, int n)
 static int
 balancerest(Wal *w, File *b, int n)
 {
-    int rest, c, r;
-    static const int z = sizeof(int) + sizeof(Jobrec);
+  int rest, c, r;
+  static const int z = sizeof(int) + sizeof(Jobrec);
 
-    if (!b) return 1;
+  if (!b) return 1;
 
-    rest = b->resv - n;
-    r = rest % z;
-    if (r == 0) return balancerest(w, b->next, 0);
+  rest = b->resv - n;
+  r = rest % z;
+  if (r == 0) return balancerest(w, b->next, 0);
 
-    c = z - r;
-    if (w->tail->resv >= c && b->free >= c) {
-        moveresv(b, w->tail, c);
-        return balancerest(w, b->next, 0);
-    }
-
-    if (needfree(w, r) != r) {
-        twarnx("needfree");
-        return 0;
-    }
-    moveresv(w->tail, b, r);
+  c = z - r;
+  if (w->tail->resv >= c && b->free >= c) {
+    moveresv(b, w->tail, c);
     return balancerest(w, b->next, 0);
+  }
+
+  if (needfree(w, r) != r) {
+    twarnx("needfree");
+    return 0;
+  }
+  moveresv(w->tail, b, r);
+  return balancerest(w, b->next, 0);
 }
 
 
@@ -307,25 +309,25 @@ balancerest(Wal *w, File *b, int n)
 static int
 balance(Wal *w, int n)
 {
-    int r;
+  int r;
 
-    // Invariant 1
-    // (this loop will run at most once)
-    while (w->cur->resv < n) {
-        int m = w->cur->resv;
+  // Invariant 1
+  // (this loop will run at most once)
+  while (w->cur->resv < n) {
+    int m = w->cur->resv;
 
-        r = needfree(w, m);
-        if (r != m) {
-            twarnx("needfree");
-            return 0;
-        }
-
-        moveresv(w->tail, w->cur, m);
-        usenext(w);
+    r = needfree(w, m);
+    if (r != m) {
+      twarnx("needfree");
+      return 0;
     }
 
-    // Invariants 2 and 3
-    return balancerest(w, w->cur, n);
+    moveresv(w->tail, w->cur, m);
+    usenext(w);
+  }
+
+  // Invariants 2 and 3
+  return balancerest(w, w->cur, n);
 }
 
 
@@ -333,36 +335,36 @@ balance(Wal *w, int n)
 static int
 reserve(Wal *w, int n)
 {
-    int r;
+  int r;
 
-    // return value must be nonzero but is otherwise ignored
-    if (!w->use) return 1;
+  // return value must be nonzero but is otherwise ignored
+  if (!w->use) return 1;
 
-    if (w->cur->free >= n) {
-        w->cur->free -= n;
-        w->cur->resv += n;
-        w->resv += n;
-        return n;
-    }
-
-    r = needfree(w, n);
-    if (r != n) {
-        twarnx("needfree");
-        return 0;
-    }
-
-    w->tail->free -= n;
-    w->tail->resv += n;
+  if (w->cur->free >= n) {
+    w->cur->free -= n;
+    w->cur->resv += n;
     w->resv += n;
-    if (!balance(w, n)) {
-        // error; undo the reservation
-        w->resv -= n;
-        w->tail->resv -= n;
-        w->tail->free += n;
-        return 0;
-    }
-
     return n;
+  }
+
+  r = needfree(w, n);
+  if (r != n) {
+    twarnx("needfree");
+    return 0;
+  }
+
+  w->tail->free -= n;
+  w->tail->resv += n;
+  w->resv += n;
+  if (!balance(w, n)) {
+    // error; undo the reservation
+    w->resv -= n;
+    w->tail->resv -= n;
+    w->tail->free += n;
+    return 0;
+  }
+
+  return n;
 }
 
 
@@ -370,19 +372,19 @@ reserve(Wal *w, int n)
 int
 walresvput(Wal *w, job j)
 {
-    int z = 0;
+  int z = 0;
 
-    // reserve space for the initial job record
-    z += sizeof(int);
-    z += strlen(j->tube->name);
-    z += sizeof(Jobrec);
-    z += j->r.body_size;
+  // reserve space for the initial job record
+  z += sizeof(int);
+  z += strlen(j->tube->name);
+  z += sizeof(Jobrec);
+  z += j->r.body_size;
 
-    // plus space for a delete to come later
-    z += sizeof(int);
-    z += sizeof(Jobrec);
+  // plus space for a delete to come later
+  z += sizeof(int);
+  z += sizeof(Jobrec);
 
-    return reserve(w, z);
+  return reserve(w, z);
 }
 
 
@@ -390,108 +392,115 @@ walresvput(Wal *w, job j)
 int
 walresvupdate(Wal *w, job j)
 {
-    int z = 0;
+  int z = 0;
 
-    z +=sizeof(int);
-    z +=sizeof(Jobrec);
-    return reserve(w, z);
+  z +=sizeof(int);
+  z +=sizeof(Jobrec);
+  return reserve(w, z);
 }
 
 
 // Returns the number of locks acquired: either 0 or 1.
+// 给文件加写锁，排它性
+/* http://blog.163.com/xychenbaihu@yeah/blog/static/1322296552010102781048427/ */
 int
 waldirlock(Wal *w)
 {
-    int r;
-    int fd;
-    struct flock lk;
-    char *path;
-    size_t path_length;
+  int r;
+  int fd;
+  struct flock lk;
+  char *path;
+  size_t path_length;
 
-    path_length = strlen(w->dir) + strlen("/lock") + 1;
-    if ((path = malloc(path_length)) == NULL) {
-        twarn("malloc");
-        return 0;
-    }
-    r = snprintf(path, path_length, "%s/lock", w->dir);
+  path_length = strlen(w->dir) + strlen("/lock") + 1;
+  if ((path = malloc(path_length)) == NULL) {
+    twarn("malloc");
+    return 0;
+  }
+  r = snprintf(path, path_length, "%s/lock", w->dir);
 
-    fd = open(path, O_WRONLY|O_CREAT, 0600);
-    free(path);
-    if (fd == -1) {
-        twarn("open");
-        return 0;
-    }
+  fd = open(path, O_WRONLY|O_CREAT, 0600);
+  free(path);
+  if (fd == -1) {
+    twarn("open");
+    return 0;
+  }
 
-    lk.l_type = F_WRLCK;
-    lk.l_whence = SEEK_SET;
-    lk.l_start = 0;
-    lk.l_len = 0;
-    r = fcntl(fd, F_SETLK, &lk);
-    if (r) {
-        twarn("fcntl");
-        return 0;
-    }
+  // 加了一个写锁
+  lk.l_type = F_WRLCK;
+  lk.l_whence = SEEK_SET;
+  lk.l_start = 0;
+  lk.l_len = 0;
+  r = fcntl(fd, F_SETLK, &lk);
+  if (r) {
+    twarn("fcntl");
+    return 0;
+  }
 
-    // intentionally leak fd, since we never want to close it
-    // and we'll never need it again
-    return 1;
+  // intentionally leak fd, since we never want to close it
+  // and we'll never need it again
+  return 1;
 }
 
-
+// 从bin log里面读取需要的数据，还原到内存里面
 void
 walread(Wal *w, job list, int min)
 {
-    File *f;
-    int i, fd;
-    int err = 0;
+  File *f;
+  int i, fd;
+  int err = 0;
 
-    for (i = min; i < w->next; i++) {
-        f = new(File);
-        if (!f) {
-            twarnx("OOM");
-            exit(1);
-        }
+  // 从最小开始
+  for (i = min; i < w->next; i++) {
 
-        if (!fileinit(f, w, i)) {
-            free(f);
-            twarnx("OOM");
-            exit(1);
-        }
-
-        fd = open(f->path, O_RDONLY);
-        if (fd < 0) {
-            twarn("open %s", f->path);
-            free(f->path);
-            free(f);
-            continue;
-        }
-
-        f->fd = fd;
-        fileadd(f, w);
-        err |= fileread(f, list);
-        close(fd);
+    f = new(File);
+    if (!f) {
+      twarnx("OOM");
+      exit(1);
     }
 
-    if (err) {
-        warnx("Errors reading one or more WAL files.");
-        warnx("Continuing. You may be missing data.");
+    if (!fileinit(f, w, i)) {
+      free(f);
+      twarnx("OOM");
+      exit(1);
     }
+
+    fd = open(f->path, O_RDONLY);
+    if (fd < 0) {
+      twarn("open %s", f->path);
+      free(f->path);
+      free(f);
+      continue;
+    }
+
+    f->fd = fd;
+    fileadd(f, w);
+    err |= fileread(f, list);
+    close(fd);
+  }
+
+  if (err) {
+    warnx("Errors reading one or more WAL files.");
+    warnx("Continuing. You may be missing data.");
+  }
 }
 
 
+// 初始化bin log，如果不存在，就创建
+// 如果存在，就把bin log的数据恢复到内存里面
 void
 walinit(Wal *w, job list)
 {
-    int min;
+  int min;
 
-    min = walscandir(w);
-    walread(w, list, min);
+  min = walscandir(w); // 扫描当前的binlog文件夹，找出最新的log数量
+  walread(w, list, min); //
 
-    // first writable file
-    if (!makenextfile(w)) {
-        twarnx("makenextfile");
-        exit(1);
-    }
+  // first writable file
+  if (!makenextfile(w)) {
+    twarnx("makenextfile");
+    exit(1);
+  }
 
-    w->cur = w->tail;
+  w->cur = w->tail;
 }
