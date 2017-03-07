@@ -446,5 +446,5 @@ struct Server {
   Socket sock;  // 服务器的listen socket
   Heap   conns; // 用堆结构来管理tcp链接，这里记录当前客户端发过来的链接
 };
-void srvserve(Server *srv);
-void srvaccept(Server *s, int ev);
+void srvserve(Server *srv); // server的大循环
+void srvaccept(Server *s, int ev); // 接受新的socket请求

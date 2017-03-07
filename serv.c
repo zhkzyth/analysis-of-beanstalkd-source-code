@@ -27,6 +27,7 @@ srvserve(Server *s)
     exit(1);
   }
 
+  // TODO 入口在这里哈
   s->sock.x = s;
   s->sock.f = (Handle)srvaccept; // 命令处理函数
 
