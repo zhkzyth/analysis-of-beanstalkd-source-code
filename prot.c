@@ -1125,12 +1125,15 @@ do_list_tubes(Conn *c, ms l)
 
   /* first, measure how big a buffer we will need */
   resp_z = 6; /* initial "---\n" and final "\r\n" */
+
+  // 分配需要的空间
   for (i = 0; i < l->used; i++) {
     t = l->items[i];
     resp_z += 3 + strlen(t->name); /* including "- " and "\n" */
   }
 
   c->out_job = allocate_job(resp_z); /* fake job to hold response data */
+
   if (!c->out_job) return reply_serr(c, MSG_OUT_OF_MEMORY);
 
   /* Mark this job as a copy so it can be appropriately freed later on */
@@ -1143,11 +1146,15 @@ do_list_tubes(Conn *c, ms l)
     t = l->items[i];
     buf += snprintf(buf, 4 + strlen(t->name), "- %s\n", t->name);
   }
+
+  // 为什么这里放在第1、2位，难道是逆序？
   buf[0] = '\r';
   buf[1] = '\n';
 
   c->out_job_sent = 0;
+
   return reply_line(c, STATE_SENDJOB, "OK %zu\r\n", resp_z - 2);
+
 }
 
 static int
@@ -1256,6 +1263,7 @@ prot_remove_tube(tube t)
   ms_remove(&tubes, t);
 }
 
+// 分发命令
 static void
 dispatch_cmd(Conn *c)
 {
@@ -1278,6 +1286,7 @@ dispatch_cmd(Conn *c)
     return reply_msg(c, MSG_BAD_FORMAT);
   }
 
+  // 查找命令类型
   type = which_cmd(c);
   if (verbose >= 2) {
     printf("<%d command %s\n", c->sock.fd, op_names[type]);
@@ -1740,6 +1749,7 @@ enter_drain_mode(int sig)
   drain_mode = 1;
 }
 
+// 执行命令
 static void
 do_cmd(Conn *c)
 {
@@ -1770,7 +1780,9 @@ conn_data(Conn *c)
   struct iovec iov[2];
 
   switch (c->state) {
+
   case STATE_WANTCOMMAND:
+
     r = read(c->sock.fd, c->cmd + c->cmd_read, LINE_BUF_SIZE - c->cmd_read);
     if (r == -1) return check_err(c, "read()");
     if (r == 0) {
@@ -1913,9 +1925,11 @@ update_conns()
 
 }
 
+// 最后谁来调用这个函数呢？
 static void
 h_conn(const int fd, const short which, Conn *c)
 {
+
   if (fd != c->sock.fd) {
     twarnx("Argh! event fd doesn't match conn fd.");
     close(fd);
@@ -1929,12 +1943,15 @@ h_conn(const int fd, const short which, Conn *c)
   }
 
   conn_data(c);
+
   while (cmd_data_ready(c) && (c->cmd_len = cmd_len(c))) do_cmd(c);
   if (c->state == STATE_CLOSE) {
     protrmdirty(c);
     connclose(c);
   }
+
   update_conns();
+
 }
 
 static void
@@ -2022,7 +2039,7 @@ prottick(Server *s)
   return period;
 }
 
-// 接受请求？
+// 接受请求
 void
 h_accept(const int fd, const short which, Server *s)
 {
@@ -2032,12 +2049,15 @@ h_accept(const int fd, const short which, Server *s)
   struct sockaddr_in6 addr;
 
   addrlen = sizeof addr;
+
   cfd = accept(fd, (struct sockaddr *)&addr, &addrlen);
+
   if (cfd == -1) {
     if (errno != EAGAIN && errno != EWOULDBLOCK) twarn("accept()");
     update_conns();
     return;
   }
+
   if (verbose) {
     printf("accept %d\n", cfd);
   }
@@ -2065,6 +2085,7 @@ h_accept(const int fd, const short which, Server *s)
     return;
   }
 
+  // 创建连接
   c = make_conn(cfd, STATE_WANTCOMMAND, default_tube, default_tube);
   if (!c) {
     twarnx("make_conn() failed");
@@ -2075,11 +2096,13 @@ h_accept(const int fd, const short which, Server *s)
     update_conns();
     return;
   }
+  // 设置c的配置信息
   c->srv = s;
   c->sock.x = c;
   c->sock.f = (Handle)prothandle;
   c->sock.fd = cfd;
 
+  // 监听这个socket的读请求
   r = sockwant(&c->sock, 'r');
   if (r == -1) {
     twarn("sockwant");
@@ -2090,6 +2113,7 @@ h_accept(const int fd, const short which, Server *s)
     update_conns();
     return;
   }
+
   update_conns();
 }
 

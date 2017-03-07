@@ -27,10 +27,9 @@ srvserve(Server *s)
     exit(1);
   }
 
-  // TODO 入口在这里哈
+  // 配置server的listen socket
   s->sock.x = s;
   s->sock.f = (Handle)srvaccept; // 命令处理函数
-
   s->conns.less = (Less)connless; // connless函数
   s->conns.rec = (Record)connrec; // connrec函数
 
@@ -59,7 +58,7 @@ srvserve(Server *s)
       exit(1);
     }
 
-    // 处理 ??
+    // 处理读写请求
     if (rw) {
       sock->f(sock->x, rw);
     }

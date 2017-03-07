@@ -95,14 +95,15 @@ void* heapremove(Heap *h, int k); // 从堆中移除
 // socket结构
 // 为什么需要单独new一个出来呢
 struct Socket {
-  int    fd;
-  Handle f;
-  void   *x;
-  int    added;
+  int    fd;  // socket的句柄
+  Handle f;   // 处理函数
+  void   *x;  // 指回server了
+  int    added; // 已经添加
 };
 int sockinit(void);
 int sockwant(Socket*, int);
 int socknext(Socket**, int64);
+
 
 // 貌似是用来统计全局的tube信息的
 // 比如used会记录当前server使用了多少条tube
@@ -343,7 +344,7 @@ struct Conn {
   int in_job_read;
   job in_job; // a job to be read from the client
 
-  job out_job;
+  job out_job; /* fake job to hold response data */
   int out_job_sent;
 
   struct ms  watch;

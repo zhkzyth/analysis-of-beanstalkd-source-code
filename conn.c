@@ -27,6 +27,7 @@ on_ignore(ms a, tube t, size_t i)
     tube_dref(t);
 }
 
+// 构造连接对象
 Conn *
 make_conn(int fd, char start_state, tube use, tube watch)
 {

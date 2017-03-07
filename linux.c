@@ -28,10 +28,12 @@ int
 sockinit(void)
 {
     epfd = epoll_create(1);
+
     if (epfd == -1) {
         twarn("epoll_create");
         return -1;
     }
+
     return 0;
 }
 
@@ -41,6 +43,7 @@ int
 sockwant(Socket *s, int rw)
 {
     int op;
+
     struct epoll_event ev = {};
 
     //

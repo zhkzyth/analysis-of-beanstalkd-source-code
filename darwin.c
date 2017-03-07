@@ -1,6 +1,6 @@
 /*
  * 平台相关的网络函数
-*/
+ */
 
 #include <stdint.h>
 #include <sys/types.h>
@@ -13,9 +13,9 @@
 #include "dat.h"
 
 enum
-{
+  {
     Infinity = 1 << 30
-};
+  };
 
 static int  kq;
 static char buf0[512]; /* buffer of zeros */
@@ -27,28 +27,29 @@ static char buf0[512]; /* buffer of zeros */
 int
 rawfalloc(int fd, int len)
 {
-    int i, w;
+  int i, w;
 
-    for (i = 0; i < len; i += w) {
-        w = write(fd, buf0, sizeof buf0);
-        if (w == -1) return errno;
-    }
+  for (i = 0; i < len; i += w) {
+    w = write(fd, buf0, sizeof buf0);
+    if (w == -1) return errno;
+  }
 
-    lseek(fd, 0, 0); /* do not care if this fails */
+  lseek(fd, 0, 0); /* do not care if this fails */
 
-    return 0;
+  return 0;
 }
 
 
+// 初始化kqueue
 int
 sockinit(void)
 {
-    kq = kqueue();
-    if (kq == -1) {
-        twarn("kqueue");
-        return -1;
-    }
-    return 0;
+  kq = kqueue();
+  if (kq == -1) {
+    twarn("kqueue");
+    return -1;
+  }
+  return 0;
 }
 
 
@@ -56,50 +57,51 @@ sockinit(void)
 int
 sockwant(Socket *s, int rw)
 {
-    int n = 0;
-    struct kevent evs[2] = {}, *ev = evs;
-    struct timespec ts = {};
+  int n = 0;
+  struct kevent evs[2] = {}, *ev = evs;
+  struct timespec ts = {};
 
-    if (s->added) {
-        ev->ident = s->fd;
-        ev->filter = s->added;
-        ev->flags = EV_DELETE;
-        ev++;
-        n++;
+  if (s->added) {
+    ev->ident = s->fd;
+    ev->filter = s->added;
+    ev->flags = EV_DELETE;
+    ev++;
+    n++;
+  }
+
+  if (rw) {
+
+    ev->ident = s->fd;
+
+    switch (rw) {
+
+    case 'r':
+      ev->filter = EVFILT_READ;
+      break;
+
+    case 'w':
+      ev->filter = EVFILT_WRITE;
+      break;
+
+    default:
+      // check only for hangup
+      ev->filter = EVFILT_READ;
+      ev->fflags = NOTE_LOWAT;
+      ev->data = Infinity;
+
     }
 
-    if (rw) {
+    ev->flags = EV_ADD;
+    ev->udata = s;
 
-        ev->ident = s->fd;
+    s->added = ev->filter;
 
-        switch (rw) {
+    ev++;
 
-        case 'r':
-            ev->filter = EVFILT_READ;
-            break;
+    n++;
+  }
 
-        case 'w':
-            ev->filter = EVFILT_WRITE;
-            break;
-
-        default:
-            // check only for hangup
-            ev->filter = EVFILT_READ;
-            ev->fflags = NOTE_LOWAT;
-            ev->data = Infinity;
-        }
-
-        ev->flags = EV_ADD;
-        ev->udata = s;
-
-        s->added = ev->filter;
-
-        ev++;
-
-        n++;
-    }
-
-    return kevent(kq, evs, n, NULL, 0, &ts);
+  return kevent(kq, evs, n, NULL, 0, &ts);
 }
 
 
@@ -107,33 +109,41 @@ sockwant(Socket *s, int rw)
 int
 socknext(Socket **s, int64 timeout)
 {
-    int r;
-    struct kevent ev;
-    static struct timespec ts;
+  int r;
+  struct kevent ev;
+  static struct timespec ts;
 
-    // 等待ts时间，然后再获取读写socket
-    ts.tv_sec = timeout / 1000000000;
-    ts.tv_nsec = timeout % 1000000000;
+  // 等待ts时间，然后再获取读写socket
+  ts.tv_sec = timeout / 1000000000;
+  ts.tv_nsec = timeout % 1000000000;
 
-    r = kevent(kq, NULL, 0, &ev, 1, &ts);
+  r = kevent(kq, NULL, 0, &ev, 1, &ts);
 
-    if (r == -1 && errno != EINTR) {
-        twarn("kevent");
-        return -1;
+  if (r == -1 && errno != EINTR) {
+    twarn("kevent");
+    return -1;
+  }
+
+  if (r > 0) {
+
+    // udata不是应该是个int类型的值吗，好奇怪
+    // 为什么可以直接赋值给socket结构呢？
+    *s = ev.udata;
+
+    if (ev.flags & EV_EOF) {
+      return 'h';
     }
 
-    if (r > 0) {
-        *s = ev.udata;
-        if (ev.flags & EV_EOF) {
-            return 'h';
-        }
-        switch (ev.filter) {
-        case EVFILT_READ:
-            return 'r';
-        case EVFILT_WRITE:
-            return 'w';
-        }
-    }
+    switch (ev.filter) {
 
-    return 0;
+    case EVFILT_READ:
+      return 'r';
+
+    case EVFILT_WRITE:
+      return 'w';
+
+    }
+  }
+
+  return 0;
 }
