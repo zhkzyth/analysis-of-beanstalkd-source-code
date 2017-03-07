@@ -23,6 +23,7 @@ rawfalloc(int fd, int len)
 }
 
 
+// 创建基于epoll的事件循环
 int
 sockinit(void)
 {
@@ -35,12 +36,14 @@ sockinit(void)
 }
 
 
+// ??
 int
 sockwant(Socket *s, int rw)
 {
     int op;
     struct epoll_event ev = {};
 
+    //
     if (!s->added && !rw) {
         return 0;
     } else if (!s->added && rw) {
@@ -60,19 +63,23 @@ sockwant(Socket *s, int rw)
         ev.events = EPOLLOUT;
         break;
     }
+
     ev.events |= EPOLLRDHUP | EPOLLPRI;
+
     ev.data.ptr = s;
 
     return epoll_ctl(epfd, op, s->fd, &ev);
 }
 
 
+// 找出下一个可以进行读写操作的socket
 int
 socknext(Socket **s, int64 timeout)
 {
     int r;
     struct epoll_event ev;
 
+    // 轮询，看监听的socket有没读写请求进来
     r = epoll_wait(epfd, &ev, 1, (int)(timeout/1000000));
     if (r == -1 && errno != EINTR) {
         twarn("epoll_wait");
@@ -80,14 +87,24 @@ socknext(Socket **s, int64 timeout)
     }
 
     if (r > 0) {
+
         *s = ev.data.ptr;
+
         if (ev.events & (EPOLLHUP|EPOLLRDHUP)) {
+
             return 'h';
+
         } else if (ev.events & EPOLLIN) {
+
             return 'r';
+
         } else if (ev.events & EPOLLOUT) {
+
             return 'w';
+
         }
+
     }
+
     return 0;
 }

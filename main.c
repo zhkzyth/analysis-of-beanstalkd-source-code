@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include "dat.h"
 
+// 用户切换
 static void
 su(const char *user)
 {
@@ -58,7 +59,7 @@ int
 main(int argc, char **argv)
 {
   int r;
-  struct job list = {};
+  struct job list = {}; // 构造一个空的job，表头？
 
   progname = argv[0]; // 进程名
   setlinebuf(stdout); // 把标准输出的输出缓冲区改成线性的，有什么好处吗？

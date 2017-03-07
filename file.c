@@ -118,16 +118,19 @@ fileread(File *f, job list)
   }
 
   switch (v) {
+
   case Walver:
     fileincref(f);
     while (readrec(f, list, &err));
     filedecref(f);
     return err;
+
   case Walver5:
     fileincref(f);
     while (readrec5(f, list, &err));
     filedecref(f);
     return err;
+
   }
 
   warnx("%s: unknown version: %d", f->path, v);
@@ -135,7 +138,6 @@ fileread(File *f, job list)
 }
 
 
-// TODO 待分析
 // Readrec reads a record from f->fd into linked list l.
 // If an error occurs, it sets *err to 1.
 // Readrec returns the number of records read, either 1 or 0.
@@ -156,9 +158,11 @@ readrec(File *f, job l, int *err)
     *err = 1;
     return 0;
   }
+
   if (r != sizeof(int)) {
     return 0;
   }
+
   sz += r;
   if (namelen >= MAX_TUBE_NAME_LEN) {
     warnpos(f, -r, "namelen %d exceeds maximum of %d", namelen, MAX_TUBE_NAME_LEN - 1);
@@ -190,7 +194,9 @@ readrec(File *f, job l, int *err)
   // are we reading trailing zeroes?
   if (!jr.id) return 0;
 
+  // TODO 查看这个job是否已经在链表里面？
   j = job_find(jr.id);
+
   if (!(j || namelen)) {
     // We read a short record without having seen a
     // full record for this job, so the full record
@@ -202,12 +208,18 @@ readrec(File *f, job l, int *err)
   }
 
   switch (jr.state) {
+
+  // 原先处于reserved状态的job，需要重新分配
   case Reserved:
-    jr.state = Ready;
+    jr.state = Ready;  // 改完状态后，继续往下走
+
+  // 其他状态再对应的处理
   case Ready:
   case Buried:
   case Delayed:
+
     if (!j) {
+
       if (jr.body_size > job_data_size_limit) {
         warnpos(f, -r, "job %"PRIu64" is too big (%"PRId32" > %zu)",
                 jr.id,
@@ -215,13 +227,22 @@ readrec(File *f, job l, int *err)
                 job_data_size_limit);
         goto Error;
       }
+
+      // 创建tube
       t = tube_find_or_make(tubename);
+
+      // 创建job
       j = make_job_with_id(jr.pri, jr.delay, jr.ttr, jr.body_size,
                            t, jr.id);
-      j->next = j->prev = j;
-      j->r.created_at = jr.created_at;
+
+      j->next = j->prev = j; // 初始化这个job，把它的next,prev都指向自己
+
+      j->r.created_at = jr.created_at; // 记录job的创建时间，放到job的record结构里面
+
     }
+
     j->r = jr;
+
     job_insert(l, j);
 
     // full record; read the job body
@@ -263,6 +284,7 @@ readrec(File *f, job l, int *err)
     filermjob(j->file, j);
     job_free(j);
   }
+
   return 0;
 }
 
@@ -403,6 +425,7 @@ readrec5(File *f, job l, int *err)
 }
 
 
+// 读取fd的内容到c里面
 static int
 readfull(File *f, void *c, int n, int *err, char *desc)
 {

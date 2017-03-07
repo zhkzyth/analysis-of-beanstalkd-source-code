@@ -1,3 +1,7 @@
+/*
+ * 平台相关的网络函数
+*/
+
 #include <stdint.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -48,6 +52,7 @@ sockinit(void)
 }
 
 
+// TODO 看下这块怎么操作
 int
 sockwant(Socket *s, int rw)
 {
@@ -64,24 +69,33 @@ sockwant(Socket *s, int rw)
     }
 
     if (rw) {
+
         ev->ident = s->fd;
+
         switch (rw) {
+
         case 'r':
             ev->filter = EVFILT_READ;
             break;
+
         case 'w':
             ev->filter = EVFILT_WRITE;
             break;
+
         default:
             // check only for hangup
             ev->filter = EVFILT_READ;
             ev->fflags = NOTE_LOWAT;
             ev->data = Infinity;
         }
+
         ev->flags = EV_ADD;
         ev->udata = s;
+
         s->added = ev->filter;
+
         ev++;
+
         n++;
     }
 
@@ -89,6 +103,7 @@ sockwant(Socket *s, int rw)
 }
 
 
+// 找到下一个可以读写的socket??
 int
 socknext(Socket **s, int64 timeout)
 {
@@ -96,9 +111,12 @@ socknext(Socket **s, int64 timeout)
     struct kevent ev;
     static struct timespec ts;
 
+    // 等待ts时间，然后再获取读写socket
     ts.tv_sec = timeout / 1000000000;
     ts.tv_nsec = timeout % 1000000000;
+
     r = kevent(kq, NULL, 0, &ev, 1, &ts);
+
     if (r == -1 && errno != EINTR) {
         twarn("kevent");
         return -1;
@@ -116,5 +134,6 @@ socknext(Socket **s, int64 timeout)
             return 'w';
         }
     }
+
     return 0;
 }

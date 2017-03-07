@@ -63,7 +63,7 @@ typedef int(FAlloc)(int, int);
 
 extern const char version[];
 extern int verbose;
-extern struct Server srv;
+extern struct Server srv; // 定义一个结构？
 
 // Replaced by tests to simulate failures.
 extern FAlloc *falloc; // ?
@@ -82,11 +82,11 @@ struct stats {
 
 // 堆结构
 struct Heap {
-  int     cap; // ?
-  int     len; // ?
+  int     cap; // 当前分配空间的容量大小
+  int     len; // 已经使用的容量大小
   void    **data; // 这个应该是指向真实堆实现的那个结构的指针的
-  Less    less; // ?
-  Record  rec; // Record是一个方法的指针
+  Less    less; // Less方法指针
+  Record  rec; // Record方法指针
 };
 int   heapinsert(Heap *h, void *x); // 插入堆
 void* heapremove(Heap *h, int k); // 从堆中移除
@@ -104,11 +104,12 @@ int sockinit(void);
 int sockwant(Socket*, int);
 int socknext(Socket**, int64);
 
-// 没看懂这个结构是做什么用的??
+// 貌似是用来统计全局的tube信息的
+// 比如used会记录当前server使用了多少条tube
 struct ms {
-  size_t used, cap, last;
+  size_t used, cap, last; // used记录当前tube条数，cap待定，last待定
   void **items;
-  ms_event_fn oninsert, onremove;
+  ms_event_fn oninsert, onremove; // 记录tube事件，插入、移除相关tube的事件
 };
 
 // ??
@@ -135,37 +136,43 @@ struct Jobrec {
   int64  delay; // 延迟
   // 客户端拿走这个任务最大能保留的时间，如果超过ttr，服务端会认为客户端没完成任务，重新把job扔回到ready堆，并且拒绝响应客户端关于这个job id的任何操作请求
   // delete请求（如果失败的话，就buried请求）
-  int64  ttr;
+  int64  ttr; // 客户端最大保留的处理时间，超过这个时间，这个job就会从reserve->ready状态，直接忽视客户端的任何请求
   int32  body_size; // body size
   int64  created_at; // 创建时间
   int64  deadline_at; // 什么时候这个任务会被服务端判断失效
-  uint32 reserve_ct; // 记录次数，被reserve多少次
-  uint32 timeout_ct; // ？？
-  uint32 release_ct; // ？？
-  uint32 bury_ct; // 摧毁次数？
-  uint32 kick_ct; // kick次数？
+  uint32 reserve_ct; // 被reserve多少次
+  uint32 timeout_ct; // 超时的次数
+  uint32 release_ct; // release次数
+  uint32 bury_ct; // 被摧毁的次数
+  uint32 kick_ct; // 被kick回到ready状态的次数
   byte   state; // 一个字节的state信息，具体内部内容是啥?
 };
 
 // job结构，beanstalkd的4大结构之一
 struct job {
 
-  Jobrec r; // persistent fields; these get written to the wal
+  // persistent fields; these get written to the wal
+  // 用来恢复job数据的
+  Jobrec r;
 
   /* bookeeping fields; these are in-memory only */
-  char pad[6];
+  char pad[6]; // ?
+
   tube tube; // 记录当前job属于哪个tube
   job prev, next; /* linked list of jobs */
+
   job ht_next; /* Next job in a hash table list */
   size_t heap_index; /* where is this job in its current heap */
+
   File *file; // 这个job会被存储到哪个文件？
+
   job  fnext; // 找到下一个job，感觉这两个指针都是用来方便查找buried队列的时候用的，待验证
   job  fprev; // 找到上一个job
 
   void *reserver; // 当前的server指针，记录进程
 
-  int walresv;    // wal到底是啥东西？
-  int walused;
+  int walresv;    // ??
+  int walused;    // ??
 
   char body[]; // written separately to the wal
 };
@@ -180,8 +187,10 @@ struct tube {
   Heap ready; // 准备好了的job堆
   Heap delay; // 延迟状态的job堆
 
+  // 指针
   struct ms waiting; /* set of conns */
 
+  // 指针
   struct stats stat; // 记录当前这个tube的状态信息
 
   uint using_ct; // 使用次数？
@@ -190,7 +199,8 @@ struct tube {
   int64 pause;  // 停止次数？
   int64 deadline_at; // deadline应该算到每个job上面，为什么这里会有数据呢？
 
-  struct job buried; // 处于buried状态的job，这里不用堆结构了，只能一个一个kick出来
+  // 指针
+  struct job buried; // 处于buried状态的job，用双向链表来做
 };
 
 
@@ -295,7 +305,7 @@ void enqueue_reserved_jobs(Conn *c);
 void enter_drain_mode(int sig); // drain mode是什么意思？
 void h_accept(const int fd, const short which, Server* srv);
 void prot_remove_tube(tube t); // 移除tube
-int  prot_replay(Server *s, job list); // ?
+int  prot_replay(Server *s, job list); // 重放bin log日志，把job放回到合适的tube上面去
 
 
 // 创建server端的socket
@@ -337,6 +347,7 @@ struct Conn {
   int out_job_sent;
 
   struct ms  watch;
+
   struct job reserved_jobs; // linked list header
 };
 int  connless(Conn *a, Conn *b); // ?
@@ -348,7 +359,7 @@ void connclose(Conn *c); // 关闭链接
 void connsetproducer(Conn *c); // 标识当前链接是worker，还是producer
 void connsetworker(Conn *c);
 
-job  connsoonestjob(Conn *c); // 获取快要ready的job?
+job  connsoonestjob(Conn *c); // 获取ttr快到了的job
 int  conndeadlinesoon(Conn *c); // 获取快要进入deadline状态的链接
 int conn_ready(Conn *c); // 获取conn进入ready状态的链接
 

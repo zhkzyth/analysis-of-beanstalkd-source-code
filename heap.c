@@ -1,3 +1,7 @@
+/*
+ * 堆结构的操作
+*/
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -70,6 +74,7 @@ siftup(Heap *h, int k)
 }
 
 
+// 貌似是个最小堆
 // Heapinsert inserts x into heap h according to h->less.
 // It returns 1 on success, otherwise 0.
 int
@@ -77,8 +82,12 @@ heapinsert(Heap *h, void *x)
 {
     int k;
 
+    // 空间不够用了，再分配
+    // TODO 研究下具体算法
     if (h->len == h->cap) {
+
         void **ndata;
+
         int ncap = (h->len+1) * 2; /* allocate twice what we need */
 
         ndata = malloc(sizeof(void*) * ncap);
@@ -92,10 +101,18 @@ heapinsert(Heap *h, void *x)
         h->cap = ncap;
     }
 
+    // 调整长度信息
     k = h->len;
     h->len++;
+
+    // TODO 这两个都是跟堆操作相关的了，对这块不太熟悉，
+    // 还要看下
+    // set?
     set(h, k, x);
+
+    // siftdown?
     siftdown(h, k);
+
     return 1;
 }
 

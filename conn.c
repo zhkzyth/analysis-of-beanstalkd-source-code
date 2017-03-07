@@ -153,7 +153,7 @@ connsched(Conn *c)
     }
 }
 
-
+// O(n)找出最早超时的job出来
 /* return the reserved job with the earliest deadline,
  * or NULL if there's no reserved job */
 job
@@ -162,12 +162,16 @@ connsoonestjob(Conn *c)
     job j = NULL;
     job soonest = c->soonest_job;
 
+    // 找出最早要超时的链接
     if (soonest == NULL) {
+      // conn结构有一个reserved_jobs列表，专门用来保留自己从server请求走的job
         for (j = c->reserved_jobs.next; j != &c->reserved_jobs; j = j->next) {
             if (j->r.deadline_at <= (soonest ? : j)->r.deadline_at) soonest = j;
         }
     }
+
     c->soonest_job = soonest;
+
     return soonest;
 }
 

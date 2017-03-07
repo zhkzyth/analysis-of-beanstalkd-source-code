@@ -494,7 +494,8 @@ walinit(Wal *w, job list)
   int min;
 
   min = walscandir(w); // 扫描当前的binlog文件夹，找出最新的log数量
-  walread(w, list, min); //
+
+  walread(w, list, min); //把bin log的内容读进来，还原成job数据结构，并写到list结构里面
 
   // 然后生成最新可以用来写的bin log文件对象
   // first writable file
