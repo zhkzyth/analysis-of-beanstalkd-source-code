@@ -1,3 +1,7 @@
+/*
+ * Conn结构相关的操作
+*/
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,142 +20,155 @@ int verbose = 0;
 static void
 on_watch(ms a, tube t, size_t i)
 {
-    tube_iref(t);
-    t->watching_ct++;
+  tube_iref(t);
+  t->watching_ct++;
 }
 
 static void
 on_ignore(ms a, tube t, size_t i)
 {
-    t->watching_ct--;
-    tube_dref(t);
+  t->watching_ct--;
+  tube_dref(t);
 }
 
 // 构造连接对象
 Conn *
 make_conn(int fd, char start_state, tube use, tube watch)
 {
-    job j;
-    Conn *c;
+  job j;
+  Conn *c;
 
-    // new一个Conn对象出来
-    c = new(Conn);
-    if (!c) return twarn("OOM"), NULL;
+  // new一个Conn对象出来
+  c = new(Conn);
+  if (!c) return twarn("OOM"), NULL;
 
-    ms_init(&c->watch, (ms_event_fn) on_watch, (ms_event_fn) on_ignore);
-    if (!ms_append(&c->watch, watch)) {
-        free(c);
-        return twarn("OOM"), NULL;
-    }
+  ms_init(&c->watch, (ms_event_fn) on_watch, (ms_event_fn) on_ignore);
+  if (!ms_append(&c->watch, watch)) {
+    free(c);
+    return twarn("OOM"), NULL;
+  }
 
-    TUBE_ASSIGN(c->use, use);
-    use->using_ct++;
+  TUBE_ASSIGN(c->use, use);
+  use->using_ct++;
 
-    c->sock.fd = fd;
-    c->state = start_state;
-    c->pending_timeout = -1;
-    c->tickpos = -1;
-    j = &c->reserved_jobs;
-    j->prev = j->next = j;
+  c->sock.fd = fd;
+  c->state = start_state;
+  c->pending_timeout = -1;
+  c->tickpos = -1;
 
-    /* stats */
-    cur_conn_ct++;
-    tot_conn_ct++;
+  j = &c->reserved_jobs;
+  j->prev = j->next = j;
 
-    return c;
+  /* stats */
+  cur_conn_ct++;
+  tot_conn_ct++;
+
+  return c;
 }
 
+// 把当前的conn标记成producer
 void
 connsetproducer(Conn *c)
 {
-    if (c->type & CONN_TYPE_PRODUCER) return;
-    c->type |= CONN_TYPE_PRODUCER;
-    cur_producer_ct++; /* stats */
+  if (c->type & CONN_TYPE_PRODUCER) return;
+  c->type |= CONN_TYPE_PRODUCER;
+  cur_producer_ct++; /* stats */
 }
 
+// 把当前的conn标记成worker
 void
 connsetworker(Conn *c)
 {
-    if (c->type & CONN_TYPE_WORKER) return;
-    c->type |= CONN_TYPE_WORKER;
-    cur_worker_ct++; /* stats */
+  if (c->type & CONN_TYPE_WORKER) return;
+  c->type |= CONN_TYPE_WORKER;
+  cur_worker_ct++; /* stats */
 }
 
+// 计算当前server在跑的连接数
 int
 count_cur_conns()
 {
-    return cur_conn_ct;
+  return cur_conn_ct;
 }
 
+// 计算server总共的连接数
 uint
 count_tot_conns()
 {
-    return tot_conn_ct;
+  return tot_conn_ct;
 }
 
+// 计算当前的producer数量
 int
 count_cur_producers()
 {
-    return cur_producer_ct;
+  return cur_producer_ct;
 }
 
+// 计算当前有多少个worker
 int
 count_cur_workers()
 {
-    return cur_worker_ct;
+  return cur_worker_ct;
 }
 
 static int
 has_reserved_job(Conn *c)
 {
-    return job_list_any_p(&c->reserved_jobs);
+  return job_list_any_p(&c->reserved_jobs);
 }
 
 
+// 计算这个conn下次轮询的时间点
 static int64
 conntickat(Conn *c)
 {
-    int margin = 0, should_timeout = 0;
-    int64 t = INT64_MAX;
+  int margin = 0, should_timeout = 0;
+  int64 t = INT64_MAX;
 
-    if (conn_waiting(c)) {
-        margin = SAFETY_MARGIN;
-    }
+  if (conn_waiting(c)) {
+    margin = SAFETY_MARGIN;
+  }
 
-    if (has_reserved_job(c)) {
-        t = connsoonestjob(c)->r.deadline_at - nanoseconds() - margin;
-        should_timeout = 1;
-    }
-    if (c->pending_timeout >= 0) {
-        t = min(t, ((int64)c->pending_timeout) * 1000000000);
-        should_timeout = 1;
-    }
+  if (has_reserved_job(c)) {
+    t = connsoonestjob(c)->r.deadline_at - nanoseconds() - margin;
+    should_timeout = 1;
+  }
 
-    if (should_timeout) {
-        return nanoseconds() + t;
-    }
-    return 0;
+  if (c->pending_timeout >= 0) {
+    t = min(t, ((int64)c->pending_timeout) * 1000000000);
+    should_timeout = 1;
+  }
+
+  if (should_timeout) {
+    return nanoseconds() + t;
+  }
+
+  return 0;
 }
 
 
 void
 connwant(Conn *c, int rw)
 {
-    c->rw = rw;
-    connsched(c);
+  c->rw = rw;
+  connsched(c);
 }
 
 
 void
 connsched(Conn *c)
 {
-    if (c->tickpos > -1) {
-        heapremove(&c->srv->conns, c->tickpos);
-    }
-    c->tickat = conntickat(c);
-    if (c->tickat) {
-        heapinsert(&c->srv->conns, c);
-    }
+  if (c->tickpos > -1) {
+    heapremove(&c->srv->conns, c->tickpos);
+  }
+
+  c->tickat = conntickat(c);
+
+  if (c->tickat) {
+    heapinsert(&c->srv->conns, c);
+  }
+
 }
 
 // O(n)找出最早超时的job出来
@@ -160,20 +177,20 @@ connsched(Conn *c)
 job
 connsoonestjob(Conn *c)
 {
-    job j = NULL;
-    job soonest = c->soonest_job;
+  job j = NULL;
+  job soonest = c->soonest_job;
 
-    // 找出最早要超时的链接
-    if (soonest == NULL) {
-      // conn结构有一个reserved_jobs列表，专门用来保留自己从server请求走的job
-        for (j = c->reserved_jobs.next; j != &c->reserved_jobs; j = j->next) {
-            if (j->r.deadline_at <= (soonest ? : j)->r.deadline_at) soonest = j;
-        }
+  // 找出最早要超时的链接
+  if (soonest == NULL) {
+    // conn结构有一个reserved_jobs列表，专门用来保留自己从server请求走的job
+    for (j = c->reserved_jobs.next; j != &c->reserved_jobs; j = j->next) {
+      if (j->r.deadline_at <= (soonest ? : j)->r.deadline_at) soonest = j;
     }
+  }
 
-    c->soonest_job = soonest;
+  c->soonest_job = soonest;
 
-    return soonest;
+  return soonest;
 }
 
 
@@ -182,70 +199,90 @@ connsoonestjob(Conn *c)
 int
 conndeadlinesoon(Conn *c)
 {
-    int64 t = nanoseconds();
-    job j = connsoonestjob(c);
+  int64 t = nanoseconds();
+  job j = connsoonestjob(c);
 
-    return j && t >= j->r.deadline_at - SAFETY_MARGIN;
+  return j && t >= j->r.deadline_at - SAFETY_MARGIN; // 最后一秒都是在服务端这边的
 }
 
+
+// conn所关心的那些tube上面有木有准备好的job
 int
 conn_ready(Conn *c)
 {
-    size_t i;
+  size_t i;
 
-    for (i = 0; i < c->watch.used; i++) {
-        if (((tube) c->watch.items[i])->ready.len) return 1;
-    }
-    return 0;
+  for (i = 0; i < c->watch.used; i++) {
+    if (((tube) c->watch.items[i])->ready.len) return 1;
+  }
+
+  return 0;
 }
 
 
+// ?
 int
 connless(Conn *a, Conn *b)
 {
-    return a->tickat < b->tickat;
+  return a->tickat < b->tickat;
 }
 
 
+// ?
 void
 connrec(Conn *c, int i)
 {
-    c->tickpos = i;
+  c->tickpos = i;
 }
 
 
+// 关闭当前链接
 void
 connclose(Conn *c)
 {
-    sockwant(&c->sock, 0);
-    close(c->sock.fd);
-    if (verbose) {
-        printf("close %d\n", c->sock.fd);
-    }
+  // 在事件池里面关掉对这个socket的监听
+  sockwant(&c->sock, 0);
 
-    job_free(c->in_job);
+  // 调用系统层的关闭，我们不再需要这个socket了
+  close(c->sock.fd);
 
-    /* was this a peek or stats command? */
-    if (c->out_job && !c->out_job->r.id) job_free(c->out_job);
+  if (verbose) {
+    printf("close %d\n", c->sock.fd);
+  }
 
-    c->in_job = c->out_job = NULL;
-    c->in_job_read = 0;
+  // 释放掉这个conn的job数据
+  job_free(c->in_job);
 
-    if (c->type & CONN_TYPE_PRODUCER) cur_producer_ct--; /* stats */
-    if (c->type & CONN_TYPE_WORKER) cur_worker_ct--; /* stats */
+  /* was this a peek or stats command? */
+  if (c->out_job && !c->out_job->r.id) job_free(c->out_job);
 
-    cur_conn_ct--; /* stats */
+  c->in_job = c->out_job = NULL;
+  c->in_job_read = 0;
 
-    remove_waiting_conn(c);
-    if (has_reserved_job(c)) enqueue_reserved_jobs(c);
+  // 减少serv对应的producer或worker的统计信息
+  if (c->type & CONN_TYPE_PRODUCER) cur_producer_ct--; /* stats */
+  if (c->type & CONN_TYPE_WORKER) cur_worker_ct--; /* stats */
 
-    ms_clear(&c->watch);
-    c->use->using_ct--;
-    TUBE_ASSIGN(c->use, NULL);
+  cur_conn_ct--; /* stats */
 
-    if (c->tickpos > -1) {
-        heapremove(&c->srv->conns, c->tickpos);
-    }
+  // 把这个conn从稳定状态的结构里面去掉
+  remove_waiting_conn(c);
 
-    free(c);
+  // 把这个c控制的reserved jobs扔回到队列里面
+  if (has_reserved_job(c)) enqueue_reserved_jobs(c);
+
+  // 清掉conn之前watch的tube列表
+  ms_clear(&c->watch);
+
+  // 统计信息，去掉它正在用的tube的统计计数
+  c->use->using_ct--;
+
+  TUBE_ASSIGN(c->use, NULL);
+
+  // 从最小堆拿走conn
+  if (c->tickpos > -1) {
+    heapremove(&c->srv->conns, c->tickpos);
+  }
+
+  free(c);
 }

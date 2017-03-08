@@ -48,7 +48,7 @@ size_t job_data_size_limit = JOB_DATA_SIZE_LIMIT_DEFAULT;
 #define CMD_QUIT "quit"
 #define CMD_PAUSE_TUBE "pause-tube"
 
-#define CONSTSTRLEN(m) (sizeof(m) - 1)
+#define CONSTSTRLEN(m) (sizeof(m) - 1)  // 考虑到m本身字符串的null结尾
 
 #define CMD_PEEK_READY_LEN CONSTSTRLEN(CMD_PEEK_READY)
 #define CMD_PEEK_DELAYED_LEN CONSTSTRLEN(CMD_PEEK_DELAYED)
@@ -284,24 +284,32 @@ buried_job_p(tube t)
   return job_list_any_p(&t->buried);
 }
 
+// 回复内容
 static void
 reply(Conn *c, char *line, int len, int state)
 {
   if (!c) return;
 
+  // 触发c的写事件，等着reactor来调用自己的socket来写出内容
   connwant(c, 'w');
+
+  // ??
   c->next = dirty;
   dirty = c;
+
+  // 准备好数据
   c->reply = line;
   c->reply_len = len;
   c->reply_sent = 0;
   c->state = state;
+
   if (verbose >= 2) {
     printf(">%d reply %.*s\n", c->sock.fd, len-2, line);
   }
+
 }
 
-
+//
 static void
 protrmdirty(Conn *c)
 {
@@ -330,12 +338,14 @@ static void
 reply_line(Conn*, int, const char*, ...)
   __attribute__((format(printf, 3, 4)));
 
+//
 static void
 reply_line(Conn *c, int state, const char *fmt, ...)
 {
   int r;
   va_list ap;
 
+  // 用模糊参数，做fmt匹配
   va_start(ap, fmt);
   r = vsnprintf(c->reply_buf, LINE_BUF_SIZE, fmt, ap);
   va_end(ap);
@@ -343,9 +353,11 @@ reply_line(Conn *c, int state, const char *fmt, ...)
   /* Make sure the buffer was big enough. If not, we have a bug. */
   if (r >= LINE_BUF_SIZE) return reply_serr(c, MSG_INTERNAL_ERROR);
 
+  // 回复connection的客户端
   return reply(c, c->reply_buf, r, state);
 }
 
+//
 static void
 reply_job(Conn *c, job j, const char *word)
 {
@@ -357,6 +369,9 @@ reply_job(Conn *c, job j, const char *word)
                     word, j->r.id, j->r.body_size - 2);
 }
 
+// 把conn从每个tube的waiting结构里面去掉
+/* - "current-waiting" is the number of open connections that have issued a */
+/* reserve command while watching this tube but not yet received a response. */
 Conn *
 remove_waiting_conn(Conn *c)
 {
@@ -444,13 +459,14 @@ next_eligible_job(int64 now)
   return j;
 }
 
-// TODO 再深入做下分析
+// 操作队列
 static void
 process_queue()
 {
   job j;
   int64 now = nanoseconds();
 
+  // while循环
   while ((j = next_eligible_job(now))) { // 查找合适的job
 
     // 从ready堆里面移除
@@ -465,7 +481,8 @@ process_queue()
       j->tube->stat.urgent_ct--;
     }
 
-    // TODO 待分析
+    // 拿走一个job，并标记reserved状态
+    // 把幸运拿到job的conn连接从waiting列表里面移除
     reserve_job(remove_waiting_conn(ms_take(&j->tube->waiting)), j);
   }
 
@@ -738,6 +755,8 @@ remove_ready_job(job j)
   return j;
 }
 
+/*  - "current-waiting" is the number of open connections that have issued a */
+/*    reserve command while watching this tube but not yet received a response. */
 static void
 enqueue_waiting_conn(Conn *c)
 {
@@ -847,6 +866,7 @@ which_cmd(Conn *c)
  * This function is idempotent(). */
 static void
 fill_extra_data(Conn *c)
+// 这里的假设是，有可能我们收到的数据，包含了额外的command数据，这个时候我们不丢弃，而是放到下一次comamnd的调用里面
 {
   int extra_bytes, job_data_bytes = 0, cmd_bytes;
 
@@ -869,11 +889,14 @@ fill_extra_data(Conn *c)
 
   /* how many bytes are left to go into the future cmd? */
   cmd_bytes = extra_bytes - job_data_bytes;
+  /* void* memmove( void* dest, const void* src, size_t count ); */
   memmove(c->cmd, c->cmd + c->cmd_len + job_data_bytes, cmd_bytes);
   c->cmd_read = cmd_bytes;
   c->cmd_len = 0; /* we no longer know the length of the new command */
 }
 
+// put过来的job数据包太大啦，扔掉当前的job数据
+// 直接扔掉不行吗？
 static void
 _skip(Conn *c, int n, char *line, int len)
 {
@@ -881,18 +904,24 @@ _skip(Conn *c, int n, char *line, int len)
    * counts the bytes that remain to be thrown away. */
   c->in_job = 0;
   c->in_job_read = n;
+
   fill_extra_data(c);
 
+  // 如果数据扔完了，就返回错误信息给客户端
+  // 还有很多数据没接收完，继续接收客户端的数据，慢慢扔...
   if (c->in_job_read == 0) return reply(c, line, len, STATE_SENDWORD);
 
   c->reply = line;
   c->reply_len = len;
   c->reply_sent = 0;
-  c->state = STATE_BITBUCKET;
+
+  c->state = STATE_BITBUCKET; // 收集数据中
+
   return;
 }
 
 #define skip(c,n,m) (_skip(c,n,m,CONSTSTRLEN(m)))
+
 
 static void
 enqueue_incoming_job(Conn *c)
@@ -913,11 +942,13 @@ enqueue_incoming_job(Conn *c)
     printf("<%d job %"PRIu64"\n", c->sock.fd, j->r.id);
   }
 
+  // server不再接受新job
   if (drain_mode) {
     job_free(j);
     return reply_serr(c, MSG_DRAINING);
   }
 
+  // TODO
   if (j->walresv) return reply_serr(c, MSG_INTERNAL_ERROR);
   j->walresv = walresvput(&c->srv->wal, j);
   if (!j->walresv) return reply_serr(c, MSG_OUT_OF_MEMORY);
@@ -929,11 +960,13 @@ enqueue_incoming_job(Conn *c)
   global_stat.total_jobs_ct++;
   j->tube->stat.total_jobs_ct++;
 
+  // ok，加入job成功
   if (r == 1) return reply_line(c, STATE_SENDWORD, MSG_INSERTED_FMT, j->r.id);
 
   /* out of memory trying to grow the queue, so it gets buried */
   bury_job(c->srv, j, 0);
   reply_line(c, STATE_SENDWORD, MSG_BURIED_FMT, j->r.id);
+
 }
 
 static uint
@@ -1076,16 +1109,19 @@ read_tube_name(char **tubename, char *buf, char **end)
   return 0;
 }
 
+// 等待server分配队列的job给worker
 static void
 wait_for_job(Conn *c, int timeout)
 {
   c->state = STATE_WAIT;
-  enqueue_waiting_conn(c);
+  enqueue_waiting_conn(c); // 把这个c加入到等待获取job的conn列表里面
 
   /* Set the pending timeout to the requested timeout amount */
   c->pending_timeout = timeout;
 
   connwant(c, 'h'); // only care if they hang up
+
+  // 这些都是马上就要检查是否有hang up情况的
   c->next = dirty;
   dirty = c;
 }
@@ -1116,6 +1152,7 @@ do_stats(Conn *c, fmt_fn fmt, void *data)
   return reply_line(c, STATE_SENDJOB, "OK %d\r\n", r - 2);
 }
 
+// 列出当前在监听的tubes
 static void
 do_list_tubes(Conn *c, ms l)
 {
@@ -1140,21 +1177,28 @@ do_list_tubes(Conn *c, ms l)
   c->out_job->r.state = Copy;
 
   /* now actually format the response */
-  buf = c->out_job->body;
-  buf += snprintf(buf, 5, "---\n");
+  buf = c->out_job->body; // buf是body内存空间的指针
+
+  /* snprintf automatically appends a null character to the character sequence resulting from format substitution */
+  /* This automatically appended character is not exempt from the size check. */
+  /* This means "%d", 100 will occupy 4 bytes went 'redirected' to the *str buffer */
+  buf += snprintf(buf, 5, "---\n"); // 长度需要包括末尾的null
   for (i = 0; i < l->used; i++) {
     t = l->items[i];
+    // TIPS: 虽然每次用snprintf都会要求多写入一个null用来结尾，但作者很聪明的通过跟踪buf的位置，不断覆盖掉不需要的null
     buf += snprintf(buf, 4 + strlen(t->name), "- %s\n", t->name);
   }
 
   // 为什么这里放在第1、2位，难道是逆序？
+  // snprintf调用返回后，是返回替换的数字的，这样我们的buf指针就能一直往前走了
+  // 好诡异的语法...LOL
   buf[0] = '\r';
   buf[1] = '\n';
 
+  // 标记发送的内容长度为0
   c->out_job_sent = 0;
 
-  return reply_line(c, STATE_SENDJOB, "OK %zu\r\n", resp_z - 2);
-
+  return reply_line(c, STATE_SENDJOB, "OK %zu\r\n", resp_z - 2); // 直接忽略掉最后的\r\n两个字符得到的长度
 }
 
 static int
@@ -1190,6 +1234,7 @@ fmt_job_stats(char *buf, size_t size, job j)
                   j->r.kick_ct);
 }
 
+// 格式化输出tube的统计信息
 static int
 fmt_stats_tube(char *buf, size_t size, tube t)
 {
@@ -1217,6 +1262,7 @@ fmt_stats_tube(char *buf, size_t size, tube t)
                   time_left);
 }
 
+// 把job入队？
 static void
 maybe_enqueue_incoming_job(Conn *c)
 {
@@ -1239,10 +1285,11 @@ remove_this_reserved_job(Conn *c, job j)
     j->tube->stat.reserved_ct--;
     j->reserver = NULL;
   }
-  c->soonest_job = NULL;
+  c->soonest_job = NULL; // 很好奇这里的操作，一个conn对应一个job？
   return j;
 }
 
+// 从conn移除掉reserve住的job
 static job
 remove_reserved_job(Conn *c, job j)
 {
@@ -1293,13 +1340,19 @@ dispatch_cmd(Conn *c)
   }
 
   switch (type) {
+
+    // put命令
   case OP_PUT:
+
+    // 找出pri值
     r = read_pri(&pri, c->cmd + 4, &delay_buf);
     if (r) return reply_msg(c, MSG_BAD_FORMAT);
 
+    // 找出delay值
     r = read_delay(&delay, delay_buf, &ttr_buf);
     if (r) return reply_msg(c, MSG_BAD_FORMAT);
 
+    // 找出ttr值
     r = read_ttr(&ttr, ttr_buf, &size_buf);
     if (r) return reply_msg(c, MSG_BAD_FORMAT);
 
@@ -1307,6 +1360,7 @@ dispatch_cmd(Conn *c)
     body_size = strtoul(size_buf, &end_buf, 10);
     if (errno) return reply_msg(c, MSG_BAD_FORMAT);
 
+    // 记录操作信息
     op_ct[type]++;
 
     if (body_size > job_data_size_limit) {
@@ -1317,8 +1371,10 @@ dispatch_cmd(Conn *c)
     /* don't allow trailing garbage */
     if (end_buf[0] != '\0') return reply_msg(c, MSG_BAD_FORMAT);
 
+    // 把当前链接标记为producer
     connsetproducer(c);
 
+    // 如果ttr小于1s，把它弄回1s
     if (ttr < 1000000000) {
       ttr = 1000000000;
     }
@@ -1338,6 +1394,7 @@ dispatch_cmd(Conn *c)
     maybe_enqueue_incoming_job(c);
 
     break;
+
   case OP_PEEK_READY:
     /* don't allow trailing garbage */
     if (c->cmd_len != CMD_PEEK_READY_LEN + 2) {
@@ -1353,6 +1410,7 @@ dispatch_cmd(Conn *c)
 
     reply_job(c, j, MSG_FOUND);
     break;
+
   case OP_PEEK_DELAYED:
     /* don't allow trailing garbage */
     if (c->cmd_len != CMD_PEEK_DELAYED_LEN + 2) {
@@ -1368,6 +1426,7 @@ dispatch_cmd(Conn *c)
 
     reply_job(c, j, MSG_FOUND);
     break;
+
   case OP_PEEK_BURIED:
     /* don't allow trailing garbage */
     if (c->cmd_len != CMD_PEEK_BURIED_LEN + 2) {
@@ -1381,6 +1440,7 @@ dispatch_cmd(Conn *c)
 
     reply_job(c, j, MSG_FOUND);
     break;
+
   case OP_PEEKJOB:
     errno = 0;
     id = strtoull(c->cmd + CMD_PEEKJOB_LEN, &end_buf, 10);
@@ -1396,10 +1456,12 @@ dispatch_cmd(Conn *c)
 
     reply_job(c, j, MSG_FOUND);
     break;
+
   case OP_RESERVE_TIMEOUT:
     errno = 0;
     timeout = strtol(c->cmd + CMD_RESERVE_TIMEOUT_LEN, &end_buf, 10);
     if (errno) return reply_msg(c, MSG_BAD_FORMAT);
+
   case OP_RESERVE: /* FALLTHROUGH */
     /* don't allow trailing garbage */
     if (type == OP_RESERVE && c->cmd_len != CMD_RESERVE_LEN + 2) {
@@ -1409,6 +1471,10 @@ dispatch_cmd(Conn *c)
     op_ct[type]++;
     connsetworker(c);
 
+    // 检查这个conn之前已经获取过一个job，然后快要过期了
+    // 同时，这个conn关心的那几个tube都木有数据的时候
+    // 就跟客户端说，hello，这里木有更多数据啦，而且你自己那个还没搞定
+    // 还是先搞定你自己吧
     if (conndeadlinesoon(c) && !conn_ready(c)) {
       return reply_msg(c, MSG_DEADLINE_SOON);
     }
@@ -1417,6 +1483,7 @@ dispatch_cmd(Conn *c)
     wait_for_job(c, timeout);
     process_queue();
     break;
+
   case OP_DELETE:
     errno = 0;
     id = strtoull(c->cmd + CMD_DELETE_LEN, &end_buf, 10);
@@ -1442,6 +1509,7 @@ dispatch_cmd(Conn *c)
 
     reply(c, MSG_DELETED, MSG_DELETED_LEN, STATE_SENDWORD);
     break;
+
   case OP_RELEASE:
     errno = 0;
     id = strtoull(c->cmd + CMD_RELEASE_LEN, &pri_buf, 10);
@@ -1480,6 +1548,7 @@ dispatch_cmd(Conn *c)
     bury_job(c->srv, j, 0);
     reply(c, MSG_BURIED, MSG_BURIED_LEN, STATE_SENDWORD);
     break;
+
   case OP_BURY:
     errno = 0;
     id = strtoull(c->cmd + CMD_BURY_LEN, &pri_buf, 10);
@@ -1498,6 +1567,7 @@ dispatch_cmd(Conn *c)
     if (!r) return reply_serr(c, MSG_INTERNAL_ERROR);
     reply(c, MSG_BURIED, MSG_BURIED_LEN, STATE_SENDWORD);
     break;
+
   case OP_KICK:
     errno = 0;
     count = strtoul(c->cmd + CMD_KICK_LEN, &end_buf, 10);
@@ -1511,6 +1581,7 @@ dispatch_cmd(Conn *c)
     i = kick_jobs(c->srv, c->use, count);
 
     return reply_line(c, STATE_SENDWORD, "KICKED %u\r\n", i);
+
   case OP_JOBKICK:
     errno = 0;
     id = strtoull(c->cmd + CMD_JOBKICK_LEN, &end_buf, 10);
@@ -1528,6 +1599,7 @@ dispatch_cmd(Conn *c)
       return reply(c, MSG_NOTFOUND, MSG_NOTFOUND_LEN, STATE_SENDWORD);
     }
     break;
+
   case OP_TOUCH:
     errno = 0;
     id = strtoull(c->cmd + CMD_TOUCH_LEN, &end_buf, 10);
@@ -1543,6 +1615,7 @@ dispatch_cmd(Conn *c)
       return reply(c, MSG_NOTFOUND, MSG_NOTFOUND_LEN, STATE_SENDWORD);
     }
     break;
+
   case OP_STATS:
     /* don't allow trailing garbage */
     if (c->cmd_len != CMD_STATS_LEN + 2) {
@@ -1553,6 +1626,7 @@ dispatch_cmd(Conn *c)
 
     do_stats(c, fmt_stats, c->srv);
     break;
+
   case OP_JOBSTATS:
     errno = 0;
     id = strtoull(c->cmd + CMD_JOBSTATS_LEN, &end_buf, 10);
@@ -1566,6 +1640,7 @@ dispatch_cmd(Conn *c)
     if (!j->tube) return reply_serr(c, MSG_INTERNAL_ERROR);
     do_stats(c, (fmt_fn) fmt_job_stats, j);
     break;
+
   case OP_STATS_TUBE:
     name = c->cmd + CMD_STATS_TUBE_LEN;
     if (!name_is_ok(name, 200)) return reply_msg(c, MSG_BAD_FORMAT);
@@ -1578,6 +1653,7 @@ dispatch_cmd(Conn *c)
     do_stats(c, (fmt_fn) fmt_stats_tube, t);
     t = NULL;
     break;
+
   case OP_LIST_TUBES:
     /* don't allow trailing garbage */
     if (c->cmd_len != CMD_LIST_TUBES_LEN + 2) {
@@ -1587,6 +1663,8 @@ dispatch_cmd(Conn *c)
     op_ct[type]++;
     do_list_tubes(c, &tubes);
     break;
+
+    // 列出tube列表
   case OP_LIST_TUBE_USED:
     /* don't allow trailing garbage */
     if (c->cmd_len != CMD_LIST_TUBE_USED_LEN + 2) {
@@ -1596,6 +1674,7 @@ dispatch_cmd(Conn *c)
     op_ct[type]++;
     reply_line(c, STATE_SENDWORD, "USING %s\r\n", c->use->name);
     break;
+
   case OP_LIST_TUBES_WATCHED:
     /* don't allow trailing garbage */
     if (c->cmd_len != CMD_LIST_TUBES_WATCHED_LEN + 2) {
@@ -1605,6 +1684,7 @@ dispatch_cmd(Conn *c)
     op_ct[type]++;
     do_list_tubes(c, &c->watch);
     break;
+
   case OP_USE:
     name = c->cmd + CMD_USE_LEN;
     if (!name_is_ok(name, 200)) return reply_msg(c, MSG_BAD_FORMAT);
@@ -1620,6 +1700,7 @@ dispatch_cmd(Conn *c)
 
     reply_line(c, STATE_SENDWORD, "USING %s\r\n", c->use->name);
     break;
+
   case OP_WATCH:
     name = c->cmd + CMD_WATCH_LEN;
     if (!name_is_ok(name, 200)) return reply_msg(c, MSG_BAD_FORMAT);
@@ -1635,6 +1716,7 @@ dispatch_cmd(Conn *c)
 
     reply_line(c, STATE_SENDWORD, "WATCHING %zu\r\n", c->watch.used);
     break;
+
   case OP_IGNORE:
     name = c->cmd + CMD_IGNORE_LEN;
     if (!name_is_ok(name, 200)) return reply_msg(c, MSG_BAD_FORMAT);
@@ -1654,9 +1736,17 @@ dispatch_cmd(Conn *c)
 
     reply_line(c, STATE_SENDWORD, "WATCHING %zu\r\n", c->watch.used);
     break;
+
   case OP_QUIT:
     c->state = STATE_CLOSE;
     break;
+
+    // 暂停tube
+    /* The pause-tube command can delay any new job being reserved for a given time. Its form is: */
+    /* pause-tube <tube-name> <delay>\r\n */
+    /* - <tube> is the tube to pause */
+    /* - <delay> is an integer number of seconds < 2**32 to wait before reserving any more */
+    /* jobs from the queue */
   case OP_PAUSE_TUBE:
     op_ct[type]++;
 
@@ -1683,6 +1773,8 @@ dispatch_cmd(Conn *c)
 
     reply_line(c, STATE_SENDWORD, "PAUSED\r\n");
     break;
+
+    // 未知命令，直接返回了
   default:
     return reply_msg(c, MSG_UNKNOWN_COMMAND);
   }
@@ -1753,10 +1845,14 @@ enter_drain_mode(int sig)
 static void
 do_cmd(Conn *c)
 {
+  // 分发conn
   dispatch_cmd(c);
+
+  // 填充额外的数据
   fill_extra_data(c);
 }
 
+// 重置conn
 static void
 reset_conn(Conn *c)
 {
@@ -1769,9 +1865,11 @@ reset_conn(Conn *c)
   c->out_job = NULL;
 
   c->reply_sent = 0; /* now that we're done, reset this */
+
   c->state = STATE_WANTCOMMAND;
 }
 
+// 获取这个conn的数据
 static void
 conn_data(Conn *c)
 {
@@ -1781,6 +1879,7 @@ conn_data(Conn *c)
 
   switch (c->state) {
 
+    // 所有conn一上来都是这个状态
   case STATE_WANTCOMMAND:
 
     r = read(c->sock.fd, c->cmd + c->cmd_read, LINE_BUF_SIZE - c->cmd_read);
@@ -1792,6 +1891,7 @@ conn_data(Conn *c)
 
     c->cmd_read += r; /* we got some bytes */
 
+    // 获取命令行的长度
     c->cmd_len = cmd_len(c); /* find the EOL */
 
     /* yay, complete command line */
@@ -1805,12 +1905,19 @@ conn_data(Conn *c)
       return reply_msg(c, MSG_BAD_FORMAT);
     }
 
+    // 没有读完一整条命令，等socket下次好了，我们还会进来这里的
     /* otherwise we have an incomplete line, so just keep waiting */
     break;
+
+    // 收到的数据不完整，但是对方还是继续送过来
+    // 比如我发了一个超级大的job过来，已经发了1/3，然后已经超过了beanstalkd最大的限制了
+    // 这个时候，我继续接受producer的请求，直到把数据全部扔完
   case STATE_BITBUCKET:
+
     /* Invert the meaning of in_job_read while throwing away data -- it
      * counts the bytes that remain to be thrown away. */
     to_read = min(c->in_job_read, BUCKET_BUF_SIZE);
+
     r = read(c->sock.fd, bucket, to_read);
     if (r == -1) return check_err(c, "read()");
     if (r == 0) {
@@ -1826,6 +1933,7 @@ conn_data(Conn *c)
       return reply(c, c->reply, c->reply_len, STATE_SENDWORD);
     }
     break;
+
   case STATE_WANTDATA:
     j = c->in_job;
 
@@ -1842,6 +1950,7 @@ conn_data(Conn *c)
 
     maybe_enqueue_incoming_job(c);
     break;
+
   case STATE_SENDWORD:
     r= write(c->sock.fd, c->reply + c->reply_sent, c->reply_len - c->reply_sent);
     if (r == -1) return check_err(c, "write()");
@@ -1858,6 +1967,7 @@ conn_data(Conn *c)
 
     /* otherwise we sent an incomplete reply, so just keep waiting */
     break;
+
   case STATE_SENDJOB:
     j = c->out_job;
 
@@ -1892,12 +2002,14 @@ conn_data(Conn *c)
 
     /* otherwise we sent incomplete data, so just keep waiting */
     break;
+
   case STATE_WAIT:
     if (c->halfclosed) {
       c->pending_timeout = -1;
       return reply_msg(remove_waiting_conn(c), MSG_TIMED_OUT);
     }
     break;
+
   }
 }
 
@@ -1905,10 +2017,10 @@ conn_data(Conn *c)
 #define cmd_data_ready(c) (want_command(c) && (c)->cmd_read)
 
 // 更新conn情况
+// dirty的意思是当前连接有读写的需求，把读写请求放到reactor里面，请求更新
 static void
 update_conns()
 {
-
   int r;
   Conn *c;
 
@@ -1925,11 +2037,11 @@ update_conns()
 
 }
 
-// 最后谁来调用这个函数呢？
+// 完成连接
 static void
 h_conn(const int fd, const short which, Conn *c)
 {
-
+  // 一定是哪里搞错了=。=
   if (fd != c->sock.fd) {
     twarnx("Argh! event fd doesn't match conn fd.");
     close(fd);
@@ -1938,22 +2050,25 @@ h_conn(const int fd, const short which, Conn *c)
     return;
   }
 
+  // half closed是什么意思？
   if (which == 'h') {
     c->halfclosed = 1;
   }
 
+  // 把客户端请求的数据拉过来
   conn_data(c);
 
   while (cmd_data_ready(c) && (c->cmd_len = cmd_len(c))) do_cmd(c);
+
   if (c->state == STATE_CLOSE) {
-    protrmdirty(c);
-    connclose(c);
+    protrmdirty(c); // 如果关闭了，就从dirty里面去掉这个socket
+    connclose(c); // 关闭连接
   }
 
   update_conns();
-
 }
 
+// 接受协议的请求
 static void
 prothandle(Conn *c, int ev)
 {
@@ -2039,7 +2154,7 @@ prottick(Server *s)
   return period;
 }
 
-// 接受请求
+// 接受客户端的连接请求
 void
 h_accept(const int fd, const short which, Server *s)
 {
@@ -2086,7 +2201,8 @@ h_accept(const int fd, const short which, Server *s)
   }
 
   // 创建连接
-  c = make_conn(cfd, STATE_WANTCOMMAND, default_tube, default_tube);
+  // 默认的state分配为STATE_WANTCOMMAND
+  c = make_conn(cfd, STATE_WANTCOMMAND, default_tube, default_tube); // 默认让conn关注default_tube
   if (!c) {
     twarnx("make_conn() failed");
     close(cfd);
@@ -2096,10 +2212,11 @@ h_accept(const int fd, const short which, Server *s)
     update_conns();
     return;
   }
+
   // 设置c的配置信息
   c->srv = s;
   c->sock.x = c;
-  c->sock.f = (Handle)prothandle;
+  c->sock.f = (Handle)prothandle; // 这个f最后是怎么被调用的?
   c->sock.fd = cfd;
 
   // 监听这个socket的读请求
@@ -2121,7 +2238,7 @@ h_accept(const int fd, const short which, Server *s)
 void
 prot_init()
 {
-  // 分配内存
+  // 初始化所有统计信息
   started_at = nanoseconds();
   memset(op_ct, 0, sizeof(op_ct));
 

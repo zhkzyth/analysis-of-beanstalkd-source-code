@@ -150,6 +150,7 @@ make_job_with_id(uint pri, int64 delay, int64 ttr,
     // 保存job
     store_job(j);
 
+    // ?
     TUBE_ASSIGN(j->tube, tube);
 
     return j;

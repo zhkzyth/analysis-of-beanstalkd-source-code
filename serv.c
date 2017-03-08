@@ -28,7 +28,7 @@ srvserve(Server *s)
   }
 
   // 配置server的listen socket
-  s->sock.x = s;
+  s->sock.x = s;   // 保留对server的引用
   s->sock.f = (Handle)srvaccept; // 命令处理函数
   s->conns.less = (Less)connless; // connless函数
   s->conns.rec = (Record)connrec; // connrec函数

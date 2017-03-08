@@ -315,26 +315,26 @@ int make_server_socket(char *host_addr, char *port);
 // 连接结构
 struct Conn {
 
-  Server *srv;
-  Socket sock;
-  char   state;
-  char   type;
-  Conn   *next;
-  tube   use;
+  Server *srv; // 服务器指针
+  Socket sock; // socket指针
+  char   state; // 当前连接的状态
+  char   type; // 当前连接的类型
+  Conn   *next; // 貌似链接之间通过next串联起来，单向链表
+  tube   use;  // 使用的tube
   int64  tickat;      // time at which to do more work
   int    tickpos;     // position in srv->conns
   job    soonest_job; // memoization of the soonest job
   int    rw;          // currently want: 'r', 'w', or 'h'
-  int    pending_timeout;
-  char   halfclosed;
+  int    pending_timeout; // ??
+  char   halfclosed; // ??
 
   char cmd[LINE_BUF_SIZE]; // this string is NOT NUL-terminated
-  int  cmd_len;
-  int  cmd_read;
+  int  cmd_len; // 命令的长度
+  int  cmd_read; // 已经读取的命令字节数
 
-  char *reply;
-  int  reply_len;
-  int  reply_sent;
+  char *reply; // 需要回复的内容指针
+  int  reply_len; // 回复内容的长度
+  int  reply_sent; // 已发送的内容长度
   char reply_buf[LINE_BUF_SIZE]; // this string IS NUL-terminated
 
   // How many bytes of in_job->body have been read so far. If in_job is NULL
@@ -347,8 +347,10 @@ struct Conn {
   job out_job; /* fake job to hold response data */
   int out_job_sent;
 
+  //
   struct ms  watch;
 
+  //
   struct job reserved_jobs; // linked list header
 };
 int  connless(Conn *a, Conn *b); // ?

@@ -58,14 +58,19 @@ ms_delete(ms a, size_t i)
   void *item;
 
   if (i >= a->used) return 0;
+
   item = a->items[i];
+
+  // 这里的删法有些奇怪
   a->items[i] = a->items[--a->used];
 
   /* it has already been removed now */
   if (a->onremove) a->onremove(a, item, i);
+
   return 1;
 }
 
+// 重置ms结构
 void
 ms_clear(ms a)
 {
@@ -74,6 +79,7 @@ ms_clear(ms a)
   ms_init(a, a->oninsert, a->onremove);
 }
 
+// 从ms空间的item里面，移除某个数据
 int
 ms_remove(ms a, void *item)
 {
@@ -81,10 +87,12 @@ ms_remove(ms a, void *item)
 
   for (i = 0; i < a->used; i++) {
     if (a->items[i] == item) return ms_delete(a, i);
+    // 从ms空间的item里面，移除某个数据
   }
   return 0;
 }
 
+// 检查ms的item列表是否包含某个值
 int
 ms_contains(ms a, void *item)
 {
@@ -104,6 +112,7 @@ ms_take(ms a)
 
   if (!a->used) return NULL;
 
+  // TODO 这样拿的算法好处是啥
   a->last = a->last % a->used;
 
   item = a->items[a->last];
